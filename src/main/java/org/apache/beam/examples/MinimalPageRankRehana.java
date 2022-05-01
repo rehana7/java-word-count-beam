@@ -17,6 +17,8 @@
  */
 package org.apache.beam.examples;
 
+import java.util.ArrayList;
+
 // beam-playground:
 //   name: MinimalWordCount
 //   description: An example that counts words in Shakespeare's works.
@@ -29,6 +31,7 @@ package org.apache.beam.examples;
 //     - Core Transforms
 
 import java.util.Arrays;
+import java.util.Collection;
 
 //import org.apache.beam.model.pipeline.v1.RunnerApi.PCollection;
 import org.apache.beam.sdk.Pipeline;
@@ -36,11 +39,13 @@ import org.apache.beam.sdk.io.TextIO;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
 import org.apache.beam.sdk.transforms.Count;
+import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.Filter;
 import org.apache.beam.sdk.transforms.FlatMapElements;
 import org.apache.beam.sdk.transforms.Flatten;
 import org.apache.beam.sdk.transforms.GroupByKey;
 import org.apache.beam.sdk.transforms.MapElements;
+import org.apache.beam.sdk.transforms.ParDo;
 import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.PCollectionList;
@@ -74,7 +79,121 @@ import org.apache.beam.sdk.values.TypeDescriptors;
  */
 public class MinimalPageRankRehana {
 
-  public static void main(String[] args) {
+    // DEFINE DOFNS
+  // ==================================================================
+  // You can make your pipeline assembly code less verbose by defining
+  // your DoFns statically out-of-line.
+  // Each DoFn<InputT, OutputT> takes previous output
+  // as input of type InputT
+  // and transforms it to OutputT.
+  // We pass this DoFn to a ParDo in our pipeline.
+
+  /**
+   * DoFn Job1Finalizer takes KV(String, String List of outlinks) and transforms
+   * the value into our custom RankedPageRehana Value holding the page's rank and list
+   * of voters.
+   * 
+   * The output of the Job1 Finalizer creates the initial input into our
+   * iterative Job 2.
+   */
+   /**
+    *
+    */
+  static class Job1Finalizer extends DoFn<KV<String, Iterable<String>>, KV<String, RankedPageRehana>> {
+    @ProcessElement
+    public void processElement(@Element KV<String, Iterable<String>> element,
+        OutputReceiver<KV<String, RankedPageRehana>> receiver) {
+      Integer contributorVotes = 0;
+      if (element.getValue() instanceof Collection) {
+        contributorVotes = ((Collection<String>) element.getValue()).size();
+      }
+      ArrayList<VotingPageRehana> voters = new ArrayList<VotingPageRehana>();
+      for (String voterName : element.getValue()) {
+        if (!voterName.isEmpty()) {
+          voters.add(new VotingPageRehana(voterName, contributorVotes));
+        }
+      }
+      receiver.output(KV.of(element.getKey(), new RankedPageRehana(element.getKey(), voters)));
+    }
+  }
+
+  /**
+   * Output Job1
+   * KV{go.md, go.md,1.00000,[ README.md, 1.00000, 1]}
+   * KV{python.md, python.md,1.00000,[ README.md, 1.00000, 1]}
+   * KV{README.md, README.md,1.00000,[ go.md, 1.00000, 3,  java.md, 1.00000, 3,  python.md, 1.00000, 3]}
+   * KV{java.md, java.md,1.00000,[ README.md, 1.00000, 1]}
+  */
+
+
+  /**
+   * DoFn Job2Mapper
+   * Flat map voter pages to keys each with key page with rank as value.
+   * 
+   */
+
+   static class Job2Mapper extends DoFn<KV<String,RankedPageRehana>,KV<String, RankedPageRehana>> {
+
+    @ProcessElement   
+    public void processElement(@Element KV<String,RankedPageRehana>element,OutputReceiver<KV<String, RankedPageRehana>>receiver) {
+      // Set zero for the integer votes.
+      Integer votes =0;
+      // creating the arrayList<VotingPage> named voters
+      // set the element getValue() , for RankedPage and call getVoters()
+      ArrayList<VotingPageRehana> voters = element.getValue().getVoters();
+      //  
+      if(voters instanceof Collection) { 
+        votes = ((Collection<VotingPageRehana>) voters).size();
+
+      }
+      for(VotingPageRehana vp : voters){
+        String pageName = vp.getName();
+        Double pageRank = vp.getRank();
+        String contributingPageName = element.getKey();
+        Double contributingPageRank = element.getValue().getRank();
+        VotingPageRehana contributor = new VotingPageRehana(contributingPageName, contributingPageRank, votes );
+        ArrayList<VotingPageRehana> arr = new ArrayList<VotingPageRehana>();
+        arr.add(contributor);
+        receiver.output(KV.of(vp.getName(), new RankedPageRehana(pageName, pageRank,arr)));
+      
+      }
+
+
+
+
+    }
+   } 
+static class Job2Updater extends DoFn<KV<String , Iterable<RankedPageRehana>>,KV<String, RankedPageRehana>>{
+  @ProcessElement   
+  public void processElement(@Element KV<String,Iterable<RankedPageRehana>> element, OutputReceiver<KV<String, RankedPageRehana>>receiver) {
+    // Set zero for the integer votes.
+    Integer votes =0;
+    // creating the arrayList<VotingPage> named voters
+    // set the element getValue() , for RankedPage and call getVoters()
+   Double dampingFactor = 0.85;
+   Double updateRank = 1-dampingFactor;
+    ArrayList<VotingPageRehana> newvotes = new ArrayList<>();
+    for(RankedPageRehana rankpage:element.getValue()){
+        if(rankpage != null){
+          for(VotingPageRehana votePage : rankpage.getVoters()){
+            newvotes.add(votePage);
+            updateRank += dampingFactor * votePage.getRank()/ (double) votePage.getVotes();
+
+          }
+        }
+    }
+   receiver.output(KV.of(element.getKey(),new RankedPageRehana(element.getKey(),updateRank, newvotes)));
+
+  }
+}
+
+/**
+ * 
+ * @param args
+ */
+  public static void main(String[] args) { 
+
+
 
     // Create a PipelineOptions object. This object lets us set various execution
     // options for our pipeline, such as the runner you wish to use. This example
@@ -119,14 +238,39 @@ public class MinimalPageRankRehana {
     PCollection<KV<String, String>> pcol4 = InputmapperFile(p, dataFolder, "README.md");
 // will make a list of all
     PCollectionList<KV<String, String>> pcolList = PCollectionList.of(pcol1).and(pcol2).and(pcol3).and(pcol4); 
-   // apply flatten
+   // apply flatten to a single PCollection.
     PCollection<KV<String, String>> mergedkv = pcolList.apply(Flatten.<KV<String, String>>pCollections());
  
+    // Group by Key to get a single record for each page
+    PCollection<KV<String, Iterable<String>>> kvStringReducedPairs = mergedkv
+        .apply(GroupByKey.<String, String>create());
+
+    // Convert to a custom Value object (RankedPage) in preparation for Job 2
+    PCollection<KV<String, RankedPageRehana>> job2in = kvStringReducedPairs.apply(ParDo.of(new Job1Finalizer()));
+
+// End Job1 
+
+PCollection<KV<String, RankedPageRehana>> job2out = null;
+int iterationscount = 40; 
+// using job2in for the calculations of job2out
+for(int i= 1;i<= iterationscount; i++){
+ PCollection<KV<String,RankedPageRehana>> job2mapper = job2in.apply(ParDo.of(new Job2Mapper()));
+ PCollection<KV<String,Iterable<RankedPageRehana>>> job2mapperGroupByKey = job2mapper.apply(GroupByKey.create());
+ job2out = job2mapperGroupByKey.apply(ParDo.of(new Job2Updater()));
+ job2in =job2out; // job2out is reading into job2in
+
+
+
+}
+
+
+
     // into the format of go.md and README.md  
  //  PCollection<KV<String,Iterable<String>>> ReducedkvPairs = mergedkv.apply(
   //   GroupByKey.<String,String>create());
 
-    PCollection<String> Rehanaoutput = mergedkv.apply(
+// using tostring() : changing the kv pairs to string, 
+    PCollection<String> Rehanaoutput = job2out.apply(
       MapElements.into(TypeDescriptors.strings())
       .via(kvinput -> kvinput.toString())
     ); 
@@ -177,7 +321,14 @@ public class MinimalPageRankRehana {
        // pcolLinks.apply(TextIO.write().to("RehPR"));
    //    Rehanaoutput.apply(TextIO.write().to("RehanaPageRank"));
    // p.run().waitUntilFinish();
-//}
+//} 
+/**
+ *
+ * @param p
+ * @param dataFolder
+ * @param dataFile
+ * @return
+ */
   private static PCollection<KV<String, String>> InputmapperFile(Pipeline p, String dataFolder, String dataFile){
     String datapath = dataFolder + "/" + dataFile;
     PCollection<String> inputline = p.apply(TextIO.read().from(datapath));
@@ -187,11 +338,14 @@ public class MinimalPageRankRehana {
     // .apply(MapElements.into(
     //   TypeDescriptors.strings())
     //   .via((String linkline -> linkline.strip()));
+
+    // formating the out links
     PCollection<String> linkpage = longlinklines
     .apply(MapElements
     .into(TypeDescriptors.strings())
     .via(linkline -> linkline
     .substring(linkline.indexOf("(") + 1, linkline.length()-1)));
+    // mapping the links with the respective file names passed to it. 
     PCollection<KV<String, String>> kvpairs = linkpage.apply(MapElements
     .into( TypeDescriptors.kvs(
      TypeDescriptors.strings(),
@@ -202,7 +356,8 @@ public class MinimalPageRankRehana {
     );
     
     
-    
+    // Returning kv pairs
+  
     return kvpairs;
 
   }
