@@ -18,7 +18,7 @@
 package org.apache.beam.examples;
 
 import java.util.ArrayList;
-
+import java.io.Serializable;
 // beam-playground:
 //   name: MinimalWordCount
 //   description: An example that counts words in Shakespeare's works.
@@ -32,12 +32,14 @@ import java.util.ArrayList;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Comparator;
 
 //import org.apache.beam.model.pipeline.v1.RunnerApi.PCollection;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.io.TextIO;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.transforms.Combine;
 import org.apache.beam.sdk.transforms.Count;
 import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.Filter;
@@ -45,6 +47,7 @@ import org.apache.beam.sdk.transforms.FlatMapElements;
 import org.apache.beam.sdk.transforms.Flatten;
 import org.apache.beam.sdk.transforms.GroupByKey;
 import org.apache.beam.sdk.transforms.MapElements;
+import org.apache.beam.sdk.transforms.Max;
 import org.apache.beam.sdk.transforms.ParDo;
 import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PCollection;
@@ -186,6 +189,23 @@ static class Job2Updater extends DoFn<KV<String , Iterable<RankedPageRehana>>,KV
 
   }
 }
+static class Job3 extends DoFn<KV<String, RankedPageRehana>, KV<String, Double>> {
+  @ProcessElement
+  public void processElement(@Element KV<String, RankedPageRehana> element,
+      OutputReceiver<KV<String, Double>> receiver) {
+    String currentPage = element.getKey();
+    Double currentPageRank = element.getValue().getRank();
+
+    receiver.output(KV.of(currentPage, currentPageRank));
+  }
+}
+
+public static class Job3Final implements Comparator<KV<String, Double>>, Serializable {
+  @Override
+  public int compare(KV<String, Double> value1, KV<String, Double> value2) {
+    return value1.getValue().compareTo(value2.getValue());
+  }
+}
 
 /**
  * 
@@ -263,6 +283,9 @@ for(int i= 1;i<= iterationscount; i++){
 
 }
 
+PCollection<KV<String, Double>> maximumRank = job2out.apply(ParDo.of(new Job3()));
+
+PCollection<KV<String, Double>> finalMaximum = maximumRank.apply(Combine.globally(Max.of(new Job3Final())));
 
 
     // into the format of go.md and README.md  
@@ -270,11 +293,11 @@ for(int i= 1;i<= iterationscount; i++){
   //   GroupByKey.<String,String>create());
 
 // using tostring() : changing the kv pairs to string, 
-    PCollection<String> Rehanaoutput = job2out.apply(
+    PCollection<String> Rehanaoutput = finalMaximum.apply(
       MapElements.into(TypeDescriptors.strings())
       .via(kvinput -> kvinput.toString())
     ); 
-    Rehanaoutput.apply(TextIO.write().to("Rehout")); 
+    Rehanaoutput.apply(TextIO.write().to("RehanaOut")); 
     p.run().waitUntilFinish();
   }
 
